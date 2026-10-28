@@ -1,0 +1,4 @@
+{
+  "serverUrl": "https://your-project.vercel.app",
+  "botToken": "Vercel 환경변수 BOT_TOKEN 과 같은 값"
+}
