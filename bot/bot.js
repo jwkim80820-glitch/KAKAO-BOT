@@ -2,8 +2,8 @@
 // 0단계(서버 없이 확인)만 하려면 USE_SERVER = false 로 두세요.
 
 var USE_SERVER = true;
-var SERVER_URL = "http://192.168.0.10:3000"; // PC의 LAN IP (ipconfig 로 확인)
-var BOT_TOKEN = "change-me-to-a-long-random-string"; // server/.env 의 BOT_TOKEN 과 동일하게
+var SERVER_URL = "https://your-project.vercel.app"; // Vercel 배포 주소 (로컬 테스트면 http://<PC-IP>:3000)
+var BOT_TOKEN = "change-me-to-a-long-random-string"; // Vercel 환경변수 BOT_TOKEN 과 동일하게
 
 function callServer(room, msg, sender, isGroupChat) {
     var body = JSON.stringify({

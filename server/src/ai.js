@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
-export const DEFAULT_MODEL = 'claude-haiku-5-5';
+export const DEFAULT_MODEL = 'gpt-6-luna';
 
 const MAX_QUESTION_LEN = 500;
 const MAX_REPLY_LEN = 1500;
@@ -14,7 +14,7 @@ const SYSTEM_PROMPT = [
 ].join('\n');
 
 const MSG = {
-  noKey: 'AI가 아직 설정되지 않았어요. (서버에 ANTHROPIC_API_KEY가 필요해요)',
+  noKey: 'AI가 아직 설정되지 않았어요. (서버에 OPENAI_API_KEY가 필요해요)',
   usage: '사용법: !ai <질문> | !ai reset',
   tooLong: `질문은 ${MAX_QUESTION_LEN}자 이하로 입력해주세요.`,
   refusal: '그 질문에는 답변하기 어려워요.',
@@ -28,9 +28,10 @@ const cooldownMsg = (sec) => `잠시만요, ${sec}초 뒤에 다시 물어봐 �
 
 /**
  * @param {object} opts
- * @param {import('@anthropic-ai/sdk').default | null} opts.client  키가 없으면 null
- * @param {ReturnType<import('./db.js').createChatStore>} opts.chats
+ * @param {import('openai').default | null} opts.client  키가 없으면 null
+ * @param {ReturnType<import('./store.js').createChatStore>} opts.chats
  * @param {string} [opts.model]
+ * @param {string} [opts.reasoningEffort]  비우면 모델 기본값 (예: 'none', 'low')
  * @param {number} [opts.historyTurns]  방마다 기억할 (질문, 답변) 쌍 수
  * @param {number} [opts.cooldownSec]
  * @param {() => number} [opts.now]
@@ -40,20 +41,19 @@ export function createAi({
   client,
   chats,
   model = DEFAULT_MODEL,
+  reasoningEffort = '',
   historyTurns = 10,
   cooldownSec = 5,
   now = Date.now,
   onError = () => {},
 }) {
-  const lastAsk = new Map();
   const maxMessages = historyTurns * 2;
 
-  function throttled(room, sender) {
-    const key = `${room}\u0000${sender}`;
+  async function throttled(room, sender) {
     const t = now();
-    const waitMs = (lastAsk.get(key) ?? 0) + cooldownSec * 1000 - t;
+    const waitMs = (await chats.lastAsk(room, sender)) + cooldownSec * 1000 - t;
     if (waitMs > 0) return Math.ceil(waitMs / 1000);
-    lastAsk.set(key, t);
+    await chats.markAsk(room, sender, t, cooldownSec);
     return 0;
   }
 
@@ -63,44 +63,40 @@ export function createAi({
     if (!client) return MSG.noKey;
     if (q.length > MAX_QUESTION_LEN) return MSG.tooLong;
 
-    const wait = throttled(room, sender);
+    const wait = await throttled(room, sender);
     if (wait) return cooldownMsg(wait);
 
     const userText = `[${sender || '?'}] ${q}`;
     try {
-      const res = await client.messages.create({
+      const res = await client.chat.completions.create({
         model,
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        // 채팅용: Haiku 5.5는 기본 effort가 medium이라 낮춰서 지연·비용을 줄인다.
-        output_config: { effort: 'low' },
+        // 추론 토큰도 이 한도에 포함되므로 넉넉히 둔다.
+        max_completion_tokens: 2048,
+        ...(reasoningEffort && { reasoning_effort: reasoningEffort }),
         messages: [
-          ...chats.recent(room, maxMessages),
+          { role: 'system', content: SYSTEM_PROMPT },
+          ...(await chats.recent(room, maxMessages)),
           { role: 'user', content: userText },
         ],
       });
 
-      if (res.stop_reason === 'refusal') return MSG.refusal;
+      const choice = res.choices?.[0];
+      if (choice?.finish_reason === 'content_filter') return MSG.refusal;
 
-      // thinking 블록은 버리고 텍스트만 사용·저장한다.
-      const text = res.content
-        .filter((b) => b.type === 'text')
-        .map((b) => b.text)
-        .join('')
-        .trim();
+      const text = (choice?.message?.content ?? '').trim();
       if (!text) return MSG.empty;
 
-      chats.appendTurn(room, userText, text, maxMessages);
+      await chats.appendTurn(room, userText, text, maxMessages);
       return text.length > MAX_REPLY_LEN ? `${text.slice(0, MAX_REPLY_LEN)}…` : text;
     } catch (err) {
       onError('ai request failed', err);
-      if (err instanceof Anthropic.RateLimitError) return MSG.rateLimited;
+      if (err instanceof OpenAI.RateLimitError) return MSG.rateLimited;
       return MSG.failed;
     }
   }
 
-  function reset(room) {
-    chats.reset(room);
+  async function reset(room) {
+    await chats.reset(room);
     return MSG.reset;
   }
 

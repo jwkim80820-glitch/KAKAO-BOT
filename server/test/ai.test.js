@@ -1,33 +1,35 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { createAi } from '../src/ai.js';
 import { buildApp } from '../src/app.js';
 import { runCommand } from '../src/commands.js';
-import { createChatStore, createTodoStore, openDb } from '../src/db.js';
-
-const text = (t) => ({ type: 'text', text: t });
+import { createMemoryRedis } from '../src/memory-redis.js';
+import { createChatStore, createTodoStore } from '../src/store.js';
 
 /** responses: 호출마다 순서대로 소비. Error면 throw. */
 function fakeClient(responses) {
   const calls = [];
   return {
     calls,
-    messages: {
-      async create(params) {
-        calls.push(structuredClone(params));
-        const r = responses.shift();
-        if (r instanceof Error) throw r;
-        return r;
+    chat: {
+      completions: {
+        async create(params) {
+          calls.push(structuredClone(params));
+          const r = responses.shift();
+          if (r instanceof Error) throw r;
+          return r;
+        },
       },
     },
   };
 }
 
-const ok = (t) => ({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, text(t)] });
+const reply = (finish_reason, content) => ({ choices: [{ finish_reason, message: { role: 'assistant', content } }] });
+const ok = (t) => reply('stop', t);
 
 function setup({ responses = [], ...opts } = {}) {
-  const db = openDb();
+  const db = createMemoryRedis();
   const client = fakeClient(responses);
   let clock = 1_000_000;
   const ai = createAi({
@@ -41,17 +43,27 @@ function setup({ responses = [], ...opts } = {}) {
 
 const ask = (ai, question, room = 'A', sender = 'kim') => ai.ask({ room, sender, question });
 
-test('sends the expected request for claude-haiku-5-5', async () => {
+test('sends the expected chat completions request', async () => {
   const { ai, client } = setup({ responses: [ok('안녕하세요!')] });
   assert.equal(await ask(ai, '안녕'), '안녕하세요!');
 
   const req = client.calls[0];
-  assert.equal(req.model, 'claude-haiku-5-5');
-  assert.deepEqual(req.output_config, { effort: 'low' });
-  assert.equal('temperature' in req, false);
-  assert.deepEqual(req.messages, [{ role: 'user', content: '[kim] 안녕' }]);
-  assert.match(req.system, /한국어/);
+  assert.equal(req.model, 'gpt-6-luna');
+  assert.equal(req.max_completion_tokens, 2048);
+  assert.equal('reasoning_effort' in req, false);
+  assert.equal(req.messages[0].role, 'system');
+  assert.match(req.messages[0].content, /한국어/);
+  assert.deepEqual(req.messages.slice(1), [{ role: 'user', content: '[kim] 안녕' }]);
 });
+
+test('reasoningEffort is sent only when configured', async () => {
+  const { ai, client } = setup({ reasoningEffort: 'low', responses: [ok('x')] });
+  await ask(ai, '안녕');
+  assert.equal(client.calls[0].reasoning_effort, 'low');
+});
+
+// 시스템 메시지를 뺀 대화 내역
+const history = (call) => call.messages.slice(1);
 
 test('remembers the room conversation, only text is stored', async () => {
   const { ai, client, advance } = setup({ responses: [ok('첫 답'), ok('둘째 답')] });
@@ -59,7 +71,7 @@ test('remembers the room conversation, only text is stored', async () => {
   advance(10_000);
   await ask(ai, '둘', 'A', 'lee');
 
-  assert.deepEqual(client.calls[1].messages, [
+  assert.deepEqual(history(client.calls[1]), [
     { role: 'user', content: '[kim] 하나' },
     { role: 'assistant', content: '첫 답' },
     { role: 'user', content: '[lee] 둘' },
@@ -76,21 +88,21 @@ test('history is separated per room and trimmed to historyTurns', async () => {
     advance(10_000);
   }
   await ask(ai, 'other', 'B');
-  assert.equal(client.calls[3].messages.length, 1); // 방 B는 독립
+  assert.equal(history(client.calls[3]).length, 1); // 방 B는 독립
 
   advance(10_000);
   await ask(ai, 'q4');
-  const sent = client.calls[4].messages.map((m) => m.content);
+  const sent = history(client.calls[4]).map((m) => m.content);
   assert.deepEqual(sent, ['[kim] q2', 'a2', '[kim] q3', 'a3', '[kim] q4']); // q1 삭제됨
 });
 
 test('reset clears the room memory', async () => {
   const { ai, client, advance } = setup({ responses: [ok('x'), ok('y')] });
   await ask(ai, '기억해');
-  assert.match(ai.reset('A'), /지웠어요/);
+  assert.match(await ai.reset('A'), /지웠어요/);
   advance(10_000);
   await ask(ai, '다시');
-  assert.equal(client.calls[1].messages.length, 1);
+  assert.equal(history(client.calls[1]).length, 1);
 });
 
 test('cooldown, empty and too long questions never call the API', async () => {
@@ -108,17 +120,17 @@ test('cooldown, empty and too long questions never call the API', async () => {
 
 test('missing API key gives a setup hint', async () => {
   const { ai } = setup({ noClient: true });
-  assert.match(await ask(ai, '안녕'), /ANTHROPIC_API_KEY/);
+  assert.match(await ask(ai, '안녕'), /OPENAI_API_KEY/);
 });
 
 test('refusal, empty reply and API errors reply politely and are not stored', async () => {
   const errors = [];
-  const rateLimit = new Anthropic.RateLimitError(429, {}, 'slow down', new Headers());
+  const rateLimit = new OpenAI.RateLimitError(429, {}, 'slow down', new Headers());
   const { ai, client, advance } = setup({
     onError: (m) => errors.push(m),
     responses: [
-      { stop_reason: 'refusal', content: [] },
-      { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }] },
+      reply('content_filter', ''),
+      reply('stop', ''),
       rateLimit,
       new Error('boom'),
       ok('정상'),
@@ -135,14 +147,14 @@ test('refusal, empty reply and API errors reply politely and are not stored', as
   assert.match(replies[3], /문제가 생겼어요/);
   assert.equal(replies[4], '정상');
   assert.equal(errors.length, 2);
-  assert.deepEqual(client.calls[4].messages, [{ role: 'user', content: '[kim] 5' }]); // 실패한 질문은 기록 안 됨
+  assert.deepEqual(history(client.calls[4]), [{ role: 'user', content: '[kim] 5' }]); // 실패한 질문은 기록 안 됨
 });
 
 test('long replies are truncated', async () => {
   const { ai } = setup({ responses: [ok('가'.repeat(2000))] });
-  const reply = await ask(ai, '길게');
-  assert.equal(reply.length, 1501);
-  assert.ok(reply.endsWith('…'));
+  const long = await ask(ai, '길게');
+  assert.equal(long.length, 1501);
+  assert.ok(long.endsWith('…'));
 });
 
 test('!ai command routing through runCommand and POST /command', async () => {

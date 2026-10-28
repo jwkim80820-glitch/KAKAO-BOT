@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildApp } from '../src/app.js';
 import { runCommand } from '../src/commands.js';
-import { createTodoStore, openDb } from '../src/db.js';
+import { createMemoryRedis } from '../src/memory-redis.js';
+import { createTodoStore } from '../src/store.js';
 
-const newStore = () => createTodoStore(openDb());
+const newStore = () => createTodoStore(createMemoryRedis());
 const say = (todos, msg, room = 'A', sender = 'kim') => runCommand({ room, sender, msg }, { todos, ai: null });
 
 test('ping / help / non-command / unknown', async () => {

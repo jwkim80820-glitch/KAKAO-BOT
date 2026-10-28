@@ -14,7 +14,7 @@ const HELP = [
 
 const parseSeq = (s) => (/^\d{1,6}$/.test(s ?? '') ? Number(s) : null);
 
-function handleTodo(args, { room, sender }, todos) {
+async function handleTodo(args, { room, sender }, todos) {
   const [sub, ...rest] = args;
 
   if (!sub) return '사용법: !todo add <내용> | list | <번호> | done <번호> | del <번호>';
@@ -23,11 +23,11 @@ function handleTodo(args, { room, sender }, todos) {
     const text = rest.join(' ').trim();
     if (!text) return '추가할 내용을 입력하세요. 예) !todo add 우유 사기';
     if (text.length > MAX_TODO_LEN) return `내용은 ${MAX_TODO_LEN}자 이하로 입력하세요.`;
-    return `#${todos.add(room, text, sender)} 추가했어요.`;
+    return `#${await todos.add(room, text, sender)} 추가했어요.`;
   }
 
   if (sub === 'list') {
-    const items = todos.list(room);
+    const items = await todos.list(room);
     if (!items.length) return '할 일이 없어요.';
     return items.map((t) => `${t.done ? '✅' : '⬜'} ${t.seq}. ${t.text}`).join('\n');
   }
@@ -35,10 +35,10 @@ function handleTodo(args, { room, sender }, todos) {
   const seq = parseSeq(sub === 'done' || sub === 'del' ? rest[0] : sub);
   if (seq === null) return '번호를 확인해주세요. 예) !todo 1';
 
-  if (sub === 'done') return todos.done(room, seq) ? `#${seq} 완료!` : `#${seq} 항목이 없어요.`;
-  if (sub === 'del') return todos.remove(room, seq) ? `#${seq} 삭제했어요.` : `#${seq} 항목이 없어요.`;
+  if (sub === 'done') return (await todos.done(room, seq)) ? `#${seq} 완료!` : `#${seq} 항목이 없어요.`;
+  if (sub === 'del') return (await todos.remove(room, seq)) ? `#${seq} 삭제했어요.` : `#${seq} 항목이 없어요.`;
 
-  const t = todos.get(room, seq);
+  const t = await todos.get(room, seq);
   if (!t) return `#${seq} 항목이 없어요.`;
   return `${t.done ? '✅' : '⬜'} ${t.seq}. ${t.text}\n(${t.sender ?? '?'} · ${t.created_at})`;
 }
@@ -55,11 +55,11 @@ export async function runCommand({ room, sender, msg }, { todos, ai }) {
     case 'help':
       return HELP;
     case 'todo':
-      return handleTodo(args, { room, sender }, todos);
+      return await handleTodo(args, { room, sender }, todos);
     case 'ai':
       return args[0]?.toLowerCase() === 'reset'
-        ? ai.reset(room)
-        : ai.ask({ room, sender, question: args.join(' ') });
+        ? await ai.reset(room)
+        : await ai.ask({ room, sender, question: args.join(' ') });
     default:
       return null;
   }
