@@ -36,9 +36,9 @@ export function createMemoryRedis() {
     async hget(k, f) {
       return hashes.get(k)?.get(String(f)) ?? null;
     },
+    // @upstash/redis를 automaticDeserialization: false 로 쓸 때와 같은 평평한 배열을 돌려준다.
     async hgetall(k) {
-      const h = hashes.get(k);
-      return h?.size ? Object.fromEntries(h) : null;
+      return [...(hashes.get(k) ?? new Map()).entries()].flat();
     },
     async hdel(k, f) {
       return hashes.get(k)?.delete(String(f)) ? 1 : 0;

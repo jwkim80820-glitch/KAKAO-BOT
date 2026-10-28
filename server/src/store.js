@@ -52,10 +52,11 @@ export function createTodoStore(redis) {
       return seq;
     },
     async list(room) {
-      const all = (await redis.hgetall(itemsKey(room))) ?? {};
-      return Object.entries(all)
-        .map(([seq, raw]) => toItem(seq, raw))
-        .sort((a, b) => a.seq - b.seq);
+      // automaticDeserialization: false 이면 hgetall이 객체가 아니라 [필드, 값, 필드, 값, ...] 배열을 준다.
+      const flat = (await redis.hgetall(itemsKey(room))) ?? [];
+      const items = [];
+      for (let i = 0; i < flat.length; i += 2) items.push(toItem(flat[i], flat[i + 1]));
+      return items.sort((a, b) => a.seq - b.seq);
     },
     async get(room, seq) {
       const raw = await redis.hget(itemsKey(room), seq);
