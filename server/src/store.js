@@ -5,25 +5,17 @@
 const kstNow = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
 
 export function createChatStore(redis) {
-  const key = (room) => `chat:${room}`;
+  // 예전 `chat:` 키는 대화 목록(list)이었으므로 타입이 충돌하지 않게 다른 접두어를 쓴다.
+  const key = (room) => `agent-session:${room}`;
   const askKey = (room, sender) => `ask:${room}\u0000${sender}`;
 
   return {
-    /** 오래된→최신 순. 첫 메시지는 항상 user (API 요구사항). */
-    async recent(room, maxMessages) {
-      const raw = await redis.lrange(key(room), -maxMessages, -1);
-      const rows = raw.map((r) => JSON.parse(r));
-      while (rows.length && rows[0].role !== 'user') rows.shift();
-      return rows;
+    /** 방이 이어서 쓰는 OpenAI 에이전트 세션 ID. 없으면 null. */
+    async getSession(room) {
+      return redis.get(key(room));
     },
-    /** user/assistant 한 쌍을 기록하고 방당 maxMessages개만 남긴다. */
-    async appendTurn(room, userText, assistantText, maxMessages) {
-      await redis.rpush(
-        key(room),
-        JSON.stringify({ role: 'user', content: userText }),
-        JSON.stringify({ role: 'assistant', content: assistantText }),
-      );
-      await redis.ltrim(key(room), -maxMessages, -1);
+    async setSession(room, sessionId) {
+      await redis.set(key(room), sessionId);
     },
     async reset(room) {
       await redis.del(key(room));
