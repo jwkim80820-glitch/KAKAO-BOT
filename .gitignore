@@ -4,3 +4,6 @@ node_modules/
 *.db-*
 .vercel
 bot/config.json
+bot/bot.js
+
+

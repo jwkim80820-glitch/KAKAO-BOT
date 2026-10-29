@@ -8,23 +8,7 @@ var USE_SERVER = true;
 var CONFIG_PATH = "/sdcard/kakaobot/config.json";
 
 function loadConfig() {
-    var file = new java.io.File(CONFIG_PATH);
-    if (!file.exists()) throw new Error("설정 파일이 없습니다: " + CONFIG_PATH);
-
-    var reader = new java.io.BufferedReader(
-        new java.io.InputStreamReader(new java.io.FileInputStream(file), "UTF-8")
-    );
-    var lines = [];
-    try {
-        var line;
-        while ((line = reader.readLine()) !== null) lines.push(String(line));
-    } finally {
-        reader.close();
-    }
-
-    var cfg = JSON.parse(lines.join("\n").replace(/^﻿/, "")); // 메모장 저장 시 붙는 BOM 제거
-    if (!cfg.serverUrl || !cfg.botToken) throw new Error("config.json 에 serverUrl, botToken 이 필요합니다");
-    return { serverUrl: String(cfg.serverUrl).replace(/\/+$/, ""), botToken: String(cfg.botToken) };
+    return { serverUrl: "https://kakao-bot-red.vercel.app", botToken:"4f12b710151e479c8ee1b77eac1b2a3b9a9c529d8d3c4d22aa214d98653d6d5a" };
 }
 
 function callServer(room, msg, sender, isGroupChat) {
